@@ -23,8 +23,6 @@
   
   <script type="module">
     import * as THREE from 'https://unpkg.com/three@0.150.1/build/three.module.js';
-    // Import gif.js for proper GIF animation support
-    import { GifLoader } from 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r150/examples/jsm/loaders/GIFLoader.js';
 
     // Main variables
     let camera, scene, renderer, controllers = [], xrSession = null, raycaster, tempMatrix, dialogSystem;
@@ -181,11 +179,9 @@
       event.target.userData.isSelecting = false;
     }
     
-    function render(time) {
-      // Update dialog system and animated textures
-      if (dialogSystem) {
-        dialogSystem.update(camera, time);
-      }
+    function render() {
+      // Update dialog system
+      if (dialogSystem) dialogSystem.update(camera);
       
       // Check controller interaction
       controllers.forEach(controller => {
@@ -231,86 +227,7 @@
       }
     }
     
-    // Alternative GIF handling if GifLoader is not available
-    class VideoTextureManager {
-      constructor() {
-        this.videos = new Map();
-      }
-      
-      createVideoTexture(url, fallbackColor, fallbackText) {
-        // Create video element
-        const video = document.createElement('video');
-        video.loop = true;
-        video.muted = true;
-        video.playsInline = true;
-        video.crossOrigin = 'anonymous';
-        video.src = url;
-        
-        // Create texture
-        const texture = new THREE.VideoTexture(video);
-        texture.minFilter = THREE.LinearFilter;
-        texture.magFilter = THREE.LinearFilter;
-        texture.format = THREE.RGBAFormat;
-        
-        // Store video for later control
-        this.videos.set(url, { video, texture });
-        
-        // Create fallback in case video fails
-        const fallbackTexture = this.createFallbackTexture(fallbackColor, fallbackText);
-        
-        // Start playing after a small delay
-        setTimeout(() => {
-          video.play().catch(() => {
-            console.warn(`Failed to play video: ${url}, using fallback`);
-            return fallbackTexture;
-          });
-        }, 100);
-        
-        return texture;
-      }
-      
-      createFallbackTexture(color, text) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 256;
-        const ctx = canvas.getContext('2d');
-        
-        // Background
-        ctx.fillStyle = color;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Border
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 4;
-        ctx.strokeRect(4, 4, canvas.width-8, canvas.height-8);
-        
-        // Text
-        ctx.font = 'bold 36px sans-serif';
-        ctx.fillStyle = 'white';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(text, canvas.width/2, canvas.height/2);
-        
-        const texture = new THREE.CanvasTexture(canvas);
-        return texture;
-      }
-      
-      update() {
-        // No need to update VideoTexture as it updates automatically
-      }
-      
-      dispose() {
-        this.videos.forEach(({video, texture}) => {
-          video.pause();
-          video.src = '';
-          video.load();
-          texture.dispose();
-        });
-        this.videos.clear();
-      }
-    }
-    
-    // Dialog System Class with improvements for GIF animation and UI
+    // Dialog System Class - Improved for GIF animation and dialog appearance
     class DialogSystem {
       constructor() {
         this.dialogPanel = null;
@@ -321,7 +238,7 @@
         this.textElement = null;
         this.nameElement = null;
         this.dialogGroup = null;
-        this.textureManager = new VideoTextureManager();
+        this.videoMaterials = {};
         
         // Dialog content
         this.dialogSequence = [
@@ -332,88 +249,82 @@
           { speaker: "Hero", message: "Enough talk. Prepare yourself!", color: "#4876FF" }
         ];
         
-        // Preload textures
-        this.loadTextures();
+        // Preload assets
+        this.loadAssets();
       }
       
-      loadTextures() {
-        try {
-          // Try to use GifLoader if available
-          const loader = new GifLoader();
-          
-          loader.load(
-            'hero.gif',
-            (texture) => { 
-              this.heroTexture = texture;
-              // If we're already displaying the hero, update the texture
-              if (this.portraitMesh && this.currentDialogIndex < this.dialogSequence.length && 
-                  this.dialogSequence[this.currentDialogIndex].speaker === "Hero") {
-                this.portraitMesh.material.map = this.heroTexture;
-                this.portraitMesh.material.needsUpdate = true;
-              }
-            }
-          );
-          
-          loader.load(
-            'deer.gif',
-            (texture) => { 
-              this.enemyTexture = texture;
-              // If we're already displaying the enemy, update the texture
-              if (this.portraitMesh && this.currentDialogIndex < this.dialogSequence.length && 
-                  this.dialogSequence[this.currentDialogIndex].speaker === "Enemy") {
-                this.portraitMesh.material.map = this.enemyTexture;
-                this.portraitMesh.material.needsUpdate = true;
-              }
-            }
-          );
-        } catch (e) {
-          console.warn('GifLoader not available. Falling back to video textures.');
-          // Fallback to video textures
-          this.heroTexture = this.textureManager.createVideoTexture('hero.mp4', '#4876FF', 'Hero');
-          this.enemyTexture = this.textureManager.createVideoTexture('deer.mp4', '#FF4848', 'Enemy');
-          
-          // Second fallback - try loading GIFs as videos (works in some browsers)
-          if (!this.heroTexture) {
-            this.heroTexture = this.textureManager.createVideoTexture('hero.gif', '#4876FF', 'Hero');
-          }
-          if (!this.enemyTexture) {
-            this.enemyTexture = this.textureManager.createVideoTexture('deer.gif', '#FF4848', 'Enemy');
-          }
-        }
+      loadAssets() {
+        // Create data URLs for basic placeholder images as fallback
+        const heroPlaceholder = this.createPlaceholderImage(256, 256, '#4876FF', 'Hero');
+        const enemyPlaceholder = this.createPlaceholderImage(256, 256, '#FF4848', 'Enemy');
         
-        // Create placeholders as final fallback
-        if (!this.heroTexture) {
-          this.heroTexture = this.createFallbackTexture('#4876FF', 'Hero');
-        }
-        if (!this.enemyTexture) {
-          this.enemyTexture = this.createFallbackTexture('#FF4848', 'Enemy');
-        }
+        // Initialize placeholder textures first
+        this.heroTexture = new THREE.TextureLoader().load(heroPlaceholder);
+        this.enemyTexture = new THREE.TextureLoader().load(enemyPlaceholder);
+        
+        // Create video elements for GIFs
+        this.setupVideoTexture('hero', 'hero.gif');
+        this.setupVideoTexture('enemy', 'deer.gif');
       }
       
-      // Fallback texture creation
-      createFallbackTexture(color, text) {
+      // Create video texture from GIF for animation
+      setupVideoTexture(name, url) {
+        // Create video element
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+        video.src = url;
+        
+        // Create texture from video
+        const texture = new THREE.VideoTexture(video);
+        texture.minFilter = THREE.LinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.format = THREE.RGBAFormat;
+        
+        // Create material
+        const material = new THREE.MeshBasicMaterial({
+          map: texture,
+          transparent: true,
+          side: THREE.DoubleSide
+        });
+        
+        // Store in videoMaterials object
+        this.videoMaterials[name] = {
+          video: video,
+          material: material
+        };
+        
+        // Force video to play (important for WebXR)
+        video.play().catch(e => console.warn('Video play error:', e));
+      }
+      
+      // Helper to create fallback images
+      createPlaceholderImage(width, height, color, text) {
         const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 256;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext('2d');
         
         // Background
         ctx.fillStyle = color;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillRect(0, 0, width, height);
         
         // Border
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 4;
-        ctx.strokeRect(4, 4, canvas.width-8, canvas.height-8);
+        ctx.strokeRect(4, 4, width-8, height-8);
         
         // Text
         ctx.font = 'bold 36px sans-serif';
         ctx.fillStyle = 'white';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(text, canvas.width/2, canvas.height/2);
+        ctx.fillText(text, width/2, height/2);
         
-        return new THREE.CanvasTexture(canvas);
+        return canvas.toDataURL();
       }
       
       init(scene, camera) {
@@ -492,12 +403,13 @@
         const portraitWidth = 0.15;
         const portraitHeight = portraitWidth * (9/16); // 16:9 aspect ratio
         
-        // Portrait mesh with 16:9 aspect ratio
+        // Create a plane for the portrait with a fallback texture to start
         this.portraitMesh = new THREE.Mesh(
           new THREE.PlaneGeometry(portraitWidth, portraitHeight),
           new THREE.MeshBasicMaterial({
             map: this.heroTexture,
-            transparent: true
+            transparent: true,
+            side: THREE.DoubleSide
           })
         );
         this.portraitMesh.position.set(-(panelWidth/2) + portraitWidth/2 + 0.025, 0.04, 0.001);
@@ -580,8 +492,8 @@
           })
         );
         
-        // Adjusted position to not overlap with portrait and move down further
-        this.textElement.position.set(0.08, -0.02, 0.001); // Changed Y from 0.04 to -0.02
+        // Repositioned text element - moved down slightly as requested
+        this.textElement.position.set(0.08, 0.02, 0.001);
         
         this.textElement.userData.updateText = (text) => {
           this.drawText(textCtx, text, textCanvas.width, textCanvas.height);
@@ -600,11 +512,11 @@
         ctx.fillStyle = 'white';
         ctx.textBaseline = 'top';
         
-        // Word wrap
+        // Word wrap - improved
         const words = text.split(' ');
         const maxWidth = width - 20;
         let line = '';
-        let lineY = 20;
+        let lineY = 30; // Increased from 20 to move text down slightly
         const lineHeight = 32;
         
         for (let i = 0; i < words.length; i++) {
@@ -624,52 +536,40 @@
       }
       
       createNextButton(panel, panelWidth, panelHeight) {
-        // Create button canvas - Simplified design
+        // Simplified button design - reduced flickering by using a simpler approach
         const buttonCanvas = document.createElement('canvas');
         buttonCanvas.width = 128;
         buttonCanvas.height = 128;
         const buttonCtx = buttonCanvas.getContext('2d');
         
-        // Draw initial button with simpler design
+        // Draw initial button
         this.drawSimpleButton(buttonCtx, false, buttonCanvas.width, buttonCanvas.height);
         
         const buttonTexture = new THREE.CanvasTexture(buttonCanvas);
         const buttonMaterial = new THREE.MeshBasicMaterial({
           map: buttonTexture,
           transparent: true,
-          side: THREE.DoubleSide
+          side: THREE.DoubleSide,
+          depthTest: false  // Prevents z-fighting/flickering
         });
         
         this.nextButton = new THREE.Mesh(
           new THREE.PlaneGeometry(0.05, 0.05),
           buttonMaterial
         );
-        this.nextButton.position.set((panelWidth/2) - 0.05, -(panelHeight/2) + 0.05, 0.001);
         
-        // Stable button state tracking to avoid flickering
-        this.buttonState = {
-          isHovered: false,
-          isPressed: false,
-          lastUpdateTime: 0
-        };
+        // Position at bottom right of panel
+        this.nextButton.position.set((panelWidth/2) - 0.05, -(panelHeight/2) + 0.05, 0.002); // Small z-offset to prevent flicker
         
-        // Interactive behavior with debounce to prevent flickering
+        // Interactive behavior
         this.nextButton.userData.onClick = () => {
-          // Don't respond to rapid clicks (debounce)
-          const now = Date.now();
-          if (now - this.buttonState.lastUpdateTime < 300) return;
-          
-          this.buttonState.lastUpdateTime = now;
-          this.buttonState.isPressed = true;
+          this.showNextDialog();
           
           // Visual feedback
           this.drawSimpleButton(buttonCtx, true, buttonCanvas.width, buttonCanvas.height);
           buttonTexture.needsUpdate = true;
           
-          // Show next dialog after a short delay
           setTimeout(() => {
-            this.showNextDialog();
-            this.buttonState.isPressed = false;
             this.drawSimpleButton(buttonCtx, false, buttonCanvas.width, buttonCanvas.height);
             buttonTexture.needsUpdate = true;
           }, 200);
@@ -678,24 +578,23 @@
         panel.add(this.nextButton);
       }
       
-      drawSimpleButton(ctx, active, width, height) {
-        // Clear the canvas
+      // Simplified button design to reduce flickering
+      drawSimpleButton(ctx, hover, width, height) {
+        // Clear canvas
         ctx.clearRect(0, 0, width, height);
         
-        // Simplified button design
-        const color = active ? '#5993FF' : '#4876FF';
-        
-        // Draw simple filled circle without gradient or complex effects
+        // Draw simple filled circle with no gradients
         ctx.beginPath();
-        ctx.arc(width/2, height/2, width/3, 0, 2 * Math.PI);
-        ctx.fillStyle = color;
+        ctx.arc(width/2, height/2, width/2.6, 0, 2 * Math.PI);
+        ctx.fillStyle = hover ? '#5993FF' : '#4876FF';
         ctx.fill();
         
-        // Draw simple arrow icon
+        // Draw simple arrow
         ctx.beginPath();
-        ctx.moveTo(width*0.4, height*0.35);
+        ctx.moveTo(width*0.35, height*0.35);
         ctx.lineTo(width*0.65, height*0.5);
-        ctx.lineTo(width*0.4, height*0.65);
+        ctx.lineTo(width*0.35, height*0.65);
+        ctx.closePath();
         ctx.fillStyle = 'white';
         ctx.fill();
       }
@@ -715,11 +614,25 @@
         
         const dialog = this.dialogSequence[this.currentDialogIndex];
         
-        // Update portrait texture based on speaker
+        // Update portrait based on speaker
         if (dialog.speaker === "Hero") {
-          this.portraitMesh.material.map = this.heroTexture;
+          // Try to use video material if available
+          if (this.videoMaterials.hero && this.videoMaterials.hero.material) {
+            this.portraitMesh.material = this.videoMaterials.hero.material;
+            // Force video to play
+            this.videoMaterials.hero.video.play().catch(e => console.warn('Hero video play error:', e));
+          } else {
+            this.portraitMesh.material.map = this.heroTexture;
+          }
         } else {
-          this.portraitMesh.material.map = this.enemyTexture;
+          // Try to use video material if available
+          if (this.videoMaterials.enemy && this.videoMaterials.enemy.material) {
+            this.portraitMesh.material = this.videoMaterials.enemy.material;
+            // Force video to play
+            this.videoMaterials.enemy.video.play().catch(e => console.warn('Enemy video play error:', e));
+          } else {
+            this.portraitMesh.material.map = this.enemyTexture;
+          }
         }
         
         this.portraitMesh.material.needsUpdate = true;
@@ -747,7 +660,7 @@
         setTimeout(() => this.startDialogSequence(), 3000);
       }
       
-      update(camera, time) {
+      update(camera) {
         if (!this.isActive || !this.dialogGroup || !camera) return;
         
         // Position dialog in front of camera
@@ -760,11 +673,6 @@
         
         // Adjust vertical position - slightly below eye level
         this.dialogGroup.position.y = camera.position.y - 0.1;
-        
-        // Update animated textures if needed (for GIFs or videos)
-        if (this.textureManager) {
-          this.textureManager.update();
-        }
       }
       
       getInteractiveObjects() {
